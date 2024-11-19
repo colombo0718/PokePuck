@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>PokePuck 遊戲示範</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <script>
+        // 初始化 three.js 場景
+        const scene = new THREE.Scene();
+
+        // 設置相機
+        const camera = new THREE.PerspectiveCamera(
+            75,
+            window.innerWidth / window.innerHeight,
+            0.1,
+            1000
+        );
+        camera.position.set(0, 15, 15);
+        camera.lookAt(0, 0, 0);
+        camera.position.z+=10
+
+        // 設置渲染器
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 添加光源
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(10, 20, 10);
+        scene.add(directionalLight);
+
+        // 調整視窗大小時自動調整渲染器
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 初始化 cannon.js 世界
+        const world = new CANNON.World();
+        world.gravity.set(0, -9.82, 0);
+        world.broadphase = new CANNON.NaiveBroadphase();
+        world.solver.iterations = 10;
+
+        // 材質和摩擦設置
+        const physicsMaterial = new CANNON.Material('physicsMaterial');
+        const physicsContactMaterial = new CANNON.ContactMaterial(
+            physicsMaterial,
+            physicsMaterial,
+            {
+                friction: 0.0,
+                restitution: 0.3
+            }
+        );
+        world.addContactMaterial(physicsContactMaterial);
+
+        // 時間步長
+        const timeStep = 1 / 60;
+
+        // 創建場地
+        const groundGeometry = new THREE.BoxGeometry(40, 1, 40);
+        const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+        const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+        groundMesh.position.y = -0.5;
+        scene.add(groundMesh);
+
+        // 物理世界中的地面
+        const groundBody = new CANNON.Body({
+            mass: 0,
+            shape: new CANNON.Box(new CANNON.Vec3(20, 0.5, 20)),
+            material: physicsMaterial
+        });
+        groundBody.position.set(0, -0.5, 0);
+        world.addBody(groundBody);
+
+
+
+        // 創建圓柱形的圓餅 (Puck)
+        const puckRadius = 1.5;
+        const puckHeight = 0.5;
+
+        // 父物件容器
+        const puckWrapper = new THREE.Object3D();
+        scene.add(puckWrapper);
+
+        // 真正的圓柱形圓餅
+        const puckGeometry = new THREE.CylinderGeometry(puckRadius, puckRadius, puckHeight, 32);
+        const puckMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+        const puckMesh = new THREE.Mesh(puckGeometry, puckMaterial);
+
+        // 將圓柱旋轉 90 度，使其與 Cannon.js 對齊
+        puckMesh.rotation.x = Math.PI / 2;
+
+        // 將圓柱添加到父容器中
+        puckWrapper.add(puckMesh);
+
+
+        // 物理世界中的圓餅
+        const puckShape = new CANNON.Cylinder(puckRadius, puckRadius, puckHeight, 32);
+        const puckBody = new CANNON.Body({
+            mass: 1, // 非零質量
+            shape: puckShape,
+            position: new CANNON.Vec3(0, 1, 0),
+            material: physicsMaterial
+        });
+
+        // 設置初始旋轉，使圓餅平躺
+        const initialQuaternion = new CANNON.Quaternion();
+        initialQuaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / 2); // 沿 X 軸旋轉 90 度
+        puckBody.quaternion = initialQuaternion;
+
+        // 將圓餅添加到物理世界
+        world.addBody(puckBody);
+
+
+        // 定義可控制的方向
+        const keysPressed = {
+            ArrowUp: false,
+            ArrowDown: false,
+            ArrowLeft: false,
+            ArrowRight: false,
+        };
+
+        // 監聽鍵盤事件
+        window.addEventListener('keydown', (event) => {
+            if (event.code in keysPressed) {
+                keysPressed[event.code] = true;
+            }
+        });
+
+        window.addEventListener('keyup', (event) => {
+            if (event.code in keysPressed) {
+                keysPressed[event.code] = false;
+            }
+        });
+
+        // 定義施加的推力大小
+        const forceMagnitude = 20;
+
+        // 在物理更新前施加力
+        function applyControls() {
+            const force = new CANNON.Vec3(0, 0, 0);
+
+            if (keysPressed['ArrowUp']) {
+                force.z -= forceMagnitude;
+            }
+            if (keysPressed['ArrowDown']) {
+                force.z += forceMagnitude;
+            }
+            if (keysPressed['ArrowLeft']) {
+                force.x -= forceMagnitude;
+            }
+            if (keysPressed['ArrowRight']) {
+                force.x += forceMagnitude;
+            }
+
+            if (force.lengthSquared() > 0) {
+                puckBody.applyForce(force, puckBody.position);
+            }
+        }
+
+        // 動畫循環
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 施加控制
+            applyControls();
+
+            // 更新物理世界
+            world.step(timeStep);
+
+            // 同步位置和旋轉到父物件
+            puckWrapper.position.copy(puckBody.position);
+            puckWrapper.quaternion.copy(puckBody.quaternion);
+
+            // 渲染場景
+            renderer.render(scene, camera);
+        }
+
+        // 開始動畫
+        animate();
+    </script>
+</body>
+</html>
